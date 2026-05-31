@@ -2501,6 +2501,17 @@ local function countPremiumPlayers()
 	return premiumCount
 end
 
+local function getPremiumPlayerNames()
+	local names = {}
+	for _, player in ipairs(Services.Players:GetPlayers()) do
+		if player ~= LocalPlayer and player.MembershipType == Enum.MembershipType.Premium then
+			table.insert(names, string.format("%s (@%s)", tostring(player.DisplayName), tostring(player.Name)))
+		end
+	end
+	table.sort(names)
+	return names
+end
+
 local function getServerQualityScore(activePremiums, premiumAfkCount, donationPower)
 	local score = 0
 	score = score + safeNumber(activePremiums, 0) * 25
@@ -3171,6 +3182,18 @@ local function debugLoop()
 	end
 end
 
+local function premiumPrintLoop()
+	while true do
+		local premiumNames = getPremiumPlayerNames()
+		local message = #premiumNames > 0
+			and string.format("Premiums no server (%d): %s", #premiumNames, table.concat(premiumNames, ", "))
+			or "Premiums no server (0): nenhum"
+		print("[Milo MFS] " .. message)
+		pushDebug("PREMIUM", message, true)
+		task.wait(10)
+	end
+end
+
 local function runAntiAfkPulse(reason, forcePrint)
 	runtime.lastAntiAfkAt = os.clock()
 
@@ -3270,6 +3293,7 @@ startLoop("claim", claimLoop)
 startLoop("behavior", behaviorLoop)
 startLoop("serverAudit", serverAuditLoop)
 startLoop("debug", debugLoop)
+startLoop("premiumPrint", premiumPrintLoop)
 startLoop("antiAfk", antiAfkLoop)
 
 task.spawn(function()
