@@ -48,7 +48,11 @@ if not LocalPlayer then
 end
 
 local RAW_SCRIPT_URL = "https://raw.githubusercontent.com/Milokinot/scripts/main/pls-donate/milo-farm-sistem.lua"
-local TELEPORT_LOADSTRING = string.format('loadstring(game:HttpGet("%s", true))()', RAW_SCRIPT_URL)
+local TELEPORT_LOADSTRING = string.format([[
+repeat task.wait() until game:IsLoaded()
+task.wait(2)
+loadstring(game:HttpGet("%s", true))()
+]], RAW_SCRIPT_URL)
 
 local executor = {}
 executor.request = (syn and syn.request)
@@ -63,6 +67,15 @@ executor.queueOnTeleport = (syn and syn.queue_on_teleport)
 	or queueonteleport
 	or (fluxus and fluxus.queue_on_teleport)
 	or (krnl and krnl.queue_on_teleport)
+
+local function getQueueOnTeleport()
+	return (syn and syn.queue_on_teleport)
+		or queue_on_teleport
+		or queueonteleport
+		or (fluxus and fluxus.queue_on_teleport)
+		or (krnl and krnl.queue_on_teleport)
+		or executor.queueOnTeleport
+end
 
 local function rawHttpGet(url)
 	local ok, body = pcall(function()
@@ -139,6 +152,7 @@ local DEFAULTS = {
 	serverQualityStayScore = 90,
 	serverHopRetryDelay = 15,
 	serverFullQueueRetryDelay = 10,
+	serverFullAvoidSeconds = 120,
 	serverQueueSource = "",
 }
 
@@ -162,6 +176,7 @@ local runtime = {
 	serverAuditInProgress = false,
 	pendingTeleportTarget = nil,
 	fullServerQueue = nil,
+	fullServerAvoidUntil = {},
 	debugLines = { "Debug aguardando eventos" },
 	debugText = "Debug aguardando eventos",
 	lastDebugPrintAt = 0,
@@ -2297,18 +2312,42 @@ local function decodeJson(raw)
 end
 
 local function queueScriptOnTeleport()
-	if type(executor.queueOnTeleport) ~= "function" then
+	local queueOnTeleport = getQueueOnTeleport()
+	if type(queueOnTeleport) ~= "function" then
 		return false, "queue_on_teleport unavailable"
 	end
 
 	local ok, err = pcall(function()
-		executor.queueOnTeleport(TELEPORT_LOADSTRING)
+		queueOnTeleport(TELEPORT_LOADSTRING)
 	end)
 	if not ok then
 		return false, tostring(err or "queue_on_teleport failed")
 	end
 
 	return true
+end
+
+local function isServerTemporarilyAvoided(serverId)
+	serverId = tostring(serverId or "")
+	if serverId == "" then
+		return false
+	end
+
+	local avoidUntil = safeNumber(runtime.fullServerAvoidUntil[serverId], 0)
+	if avoidUntil <= os.clock() then
+		runtime.fullServerAvoidUntil[serverId] = nil
+		return false
+	end
+
+	return true
+end
+
+local function markServerTemporarilyAvoided(serverId)
+	serverId = tostring(serverId or "")
+	if serverId == "" then
+		return
+	end
+	runtime.fullServerAvoidUntil[serverId] = os.clock() + math.max(15, safeNumber(settings.serverFullAvoidSeconds, 120))
 end
 
 local function isFullServerTeleportResult(value)
@@ -2326,13 +2365,15 @@ local function queueFullServerTarget(target, reason)
 	runtime.fullServerQueue = {
 		placeId = target.placeId,
 		jobId = tostring(target.jobId),
+		source = tostring(target.source or "specific"),
 		reason = tostring(reason or target.reason or "Server cheio"),
 		queuedAt = os.clock(),
 		nextTryAt = os.clock() + math.max(3, safeNumber(settings.serverFullQueueRetryDelay, 10)),
 		attempts = safeNumber(target.attempts, 0),
 	}
-	updateServerAuditText("Server cheio; entrando na fila de espera")
-	pushDebug("SERVER", "Fila de server cheio armada para job " .. tostring(target.jobId), true)
+	markServerTemporarilyAvoided(target.jobId)
+	updateServerAuditText("Server cheio; tentando outros servidores")
+	pushDebug("SERVER", "Server cheio marcado para evitar: " .. tostring(target.jobId), true)
 	return true
 end
 
@@ -2349,6 +2390,7 @@ local function teleportToQueuedTarget(target)
 	runtime.pendingTeleportTarget = {
 		placeId = target.placeId,
 		jobId = tostring(target.jobId),
+		source = target.source,
 		reason = target.reason,
 		attempts = safeNumber(target.attempts, 0),
 	}
@@ -2395,7 +2437,10 @@ local function findPreferredServer()
 			local serverId = tostring(server.id or "")
 			local playing = safeNumber(server.playing, 0)
 			local maxPlayers = safeNumber(server.maxPlayers, 0)
-			if serverId ~= "" and serverId ~= tostring(game.JobId) and playing < maxPlayers then
+			if serverId ~= ""
+				and serverId ~= tostring(game.JobId)
+				and not isServerTemporarilyAvoided(serverId)
+				and playing < maxPlayers then
 				local entry = {
 					id = serverId,
 					playing = playing,
@@ -2451,6 +2496,7 @@ local function hopToPreferredServer(reason)
 	runtime.pendingTeleportTarget = {
 		placeId = game.PlaceId,
 		jobId = target.id,
+		source = "preferred",
 		reason = reason or string.format("Switching to %d player server", target.playing),
 		attempts = 0,
 	}
@@ -2502,6 +2548,7 @@ local function joinMilokinotExperience()
 	runtime.pendingTeleportTarget = {
 		placeId = placeId,
 		jobId = jobId,
+		source = "specific",
 		reason = "Join Milokinot",
 		attempts = 0,
 	}
@@ -2837,17 +2884,27 @@ local function fullServerQueueLoop()
 			elseif not runtime.serverHopInProgress then
 				queued.attempts = safeNumber(queued.attempts, 0) + 1
 				queued.nextTryAt = os.clock() + math.max(3, safeNumber(settings.serverFullQueueRetryDelay, 10))
-				updateServerAuditText(string.format("Tentando vaga no server cheio #%d...", queued.attempts))
-
-				local ok, err = teleportToQueuedTarget(queued)
-				if not ok then
-					runtime.serverHopInProgress = false
-					if isFullServerTeleportResult(err) then
-						updateServerAuditText("Server ainda cheio; mantendo fila")
-					else
+				if queued.source == "preferred" then
+					updateServerAuditText(string.format("Server cheio; tentando outro #%d...", queued.attempts))
+					local ok, err = hopToPreferredServer("Server cheio; tentando outro server")
+					if ok then
 						runtime.fullServerQueue = nil
-						updateServerAuditText("Fila cancelada: teleport falhou")
-						warn("[Milo MFS] Full server queue failed: " .. tostring(err))
+					elseif tostring(err or "") == "No preferred server found" then
+						updateServerAuditText("Sem outro server bom agora; aguardando nova tentativa")
+					end
+				else
+					updateServerAuditText(string.format("Tentando vaga no server cheio #%d...", queued.attempts))
+
+					local ok, err = teleportToQueuedTarget(queued)
+					if not ok then
+						runtime.serverHopInProgress = false
+						if isFullServerTeleportResult(err) then
+							updateServerAuditText("Server ainda cheio; mantendo fila")
+						else
+							runtime.fullServerQueue = nil
+							updateServerAuditText("Fila cancelada: teleport falhou")
+							warn("[Milo MFS] Full server queue failed: " .. tostring(err))
+						end
 					end
 				end
 			else
