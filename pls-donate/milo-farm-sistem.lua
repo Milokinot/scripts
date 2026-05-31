@@ -47,6 +47,9 @@ if not LocalPlayer then
 	return
 end
 
+local RAW_SCRIPT_URL = "https://raw.githubusercontent.com/Milokinot/scripts/main/pls-donate/milo-farm-sistem.lua"
+local TELEPORT_LOADSTRING = string.format('loadstring(game:HttpGet("%s", true))()', RAW_SCRIPT_URL)
+
 local executor = {}
 executor.request = (syn and syn.request)
 	or (http and http.request)
@@ -2291,7 +2294,18 @@ local function decodeJson(raw)
 end
 
 local function queueScriptOnTeleport()
-	return false, "queue_on_teleport disabled in simplified build"
+	if type(executor.queueOnTeleport) ~= "function" then
+		return false, "queue_on_teleport unavailable"
+	end
+
+	local ok, err = pcall(function()
+		executor.queueOnTeleport(TELEPORT_LOADSTRING)
+	end)
+	if not ok then
+		return false, tostring(err or "queue_on_teleport failed")
+	end
+
+	return true
 end
 
 local function fetchPublicServers(cursor)
@@ -2417,6 +2431,11 @@ local function joinMilokinotExperience()
 
 	if tonumber(placeId) == tonumber(game.PlaceId) and tostring(jobId) == tostring(game.JobId) then
 		return false, "Voce ja esta na mesma instancia do Milokinot"
+	end
+
+	local queueOk, queueErr = queueScriptOnTeleport()
+	if not queueOk and queueErr then
+		warn("[Milo MFS] Teleport queue skipped: " .. tostring(queueErr))
 	end
 
 	local okTeleport, teleportErr = pcall(function()
