@@ -2,7 +2,6 @@ local REMOTE_LOAD_ATTEMPTS = 3
 local OBSIDIAN_REPO = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local CONFIG_ROOT = "DoomsdayUniversalHub"
 local AUTOSAVE_PATH = CONFIG_ROOT .. "/universal_autosave.json"
-local DOOMSDAY_SCRIPT_URL = getgenv().DOOMSDAY_SCRIPT_URL or "https://raw.githubusercontent.com/Milokinot/scripts/main/DOOMSDAY%20SCRIPT/DOOMSDAY.lua"
 local MILO_UI_URL = getgenv().MILO_UI_URL or "https://raw.githubusercontent.com/Milokinot/scripts/main/DOOMSDAY%20SCRIPT/DOOMSDAY_OBSIDIAN_UNIVERSAL.lua"
 local FIGURE_GRAB_OATS_URL = getgenv().FIGURE_GRAB_OATS_URL or "https://raw.githubusercontent.com/Milokinot/scripts/main/DOOMSDAY%20SCRIPT/modules/FIGURE_GRAB_OATS.lua"
 
@@ -258,8 +257,8 @@ local function getQueueOnTeleport()
 end
 
 local function queueDoomsdayOnTeleport()
-    if not isConfiguredUrl(DOOMSDAY_SCRIPT_URL) then
-        safeNotify("Doomsday", "Configure DOOMSDAY_SCRIPT_URL com o raw do DOOMSDAY.lua.")
+    if not isConfiguredUrl(MILO_UI_URL) then
+        safeNotify("Doomsday", "Configure MILO_UI_URL com o raw da HUD Obsidian.")
         return false
     end
 
@@ -269,10 +268,7 @@ local function queueDoomsdayOnTeleport()
         return false
     end
 
-    local payload = buildRemoteLoadstring(DOOMSDAY_SCRIPT_URL)
-    if isConfiguredUrl(MILO_UI_URL) then
-        payload = payload .. "\n" .. buildRemoteLoadstring(MILO_UI_URL)
-    end
+    local payload = buildRemoteLoadstring(MILO_UI_URL)
 
     local ok, err = pcall(queueFunction, payload)
     if not ok then
@@ -280,7 +276,7 @@ local function queueDoomsdayOnTeleport()
         return false
     end
 
-    safeNotify("Rejoin", "Doomsday ficou na fila do teleport.")
+    safeNotify("Rejoin", "HUD Obsidian ficou na fila do teleport.")
     return true
 end
 
@@ -728,7 +724,35 @@ local function updateSelectedPlayerCard()
 end
 
 local function setSpectateTargetByName(playerName)
+    if type(playerName) == "table" then
+        playerName = playerName[1]
+    end
+
+    if playerName == "" or playerName == "Nenhum player" then
+        playerName = nil
+    end
+
     selectedSpectatePlayer = playerName and Players:FindFirstChild(playerName) or nil
+    updateSelectedPlayerCard()
+end
+
+local function refreshSpectateDropdown()
+    if not Options.SpectateTarget then
+        return
+    end
+
+    local names = getPlayerNames()
+    if #names == 0 then
+        names = { "Nenhum player" }
+    end
+
+    Options.SpectateTarget:SetValues(names)
+
+    if selectedSpectatePlayer and not Players:FindFirstChild(selectedSpectatePlayer.Name) then
+        selectedSpectatePlayer = nil
+        spectating = false
+    end
+
     updateSelectedPlayerCard()
 end
 
@@ -790,19 +814,7 @@ local figureAdjust = Tabs.FigureGrab:AddRightGroupbox("Quick Adjust", "sliders-h
 local fpsGroup = Tabs["UI Settings"]:AddRightGroupbox("FPS", "gauge")
 
 doomsdayMain:AddButton({
-    Text = "Load DOOMSDAY",
-    Func = function()
-        if not isConfiguredUrl(DOOMSDAY_SCRIPT_URL) then
-            safeNotify("Doomsday", "Configure DOOMSDAY_SCRIPT_URL no topo do arquivo.")
-            return
-        end
-
-        safeHttpLoad(DOOMSDAY_SCRIPT_URL)
-    end,
-})
-
-doomsdayMain:AddButton({
-    Text = "Load Milo UI",
+    Text = "Reload Obsidian HUD",
     Func = function()
         if not isConfiguredUrl(MILO_UI_URL) then
             safeNotify("Milo Ui", "Configure MILO_UI_URL no topo do arquivo.")
@@ -817,6 +829,14 @@ doomsdayMain:AddButton({
     Text = "Load Figure Grab Oats",
     Func = function()
         loadFigureGrabModule()
+    end,
+})
+
+doomsdayMain:AddButton({
+    Text = "Refresh players",
+    Func = function()
+        refreshSpectateDropdown()
+        safeNotify("Players", "Lista de players atualizada.")
     end,
 })
 
@@ -1184,14 +1204,12 @@ selectedPlayerInfoLabel = playerCard:AddLabel({
 })
 
 visualPlayers:AddDropdown("SpectateTarget", {
-    SpecialType = "Player",
-    ExcludeLocalPlayer = true,
-    Values = getPlayerNames(),
-    Default = selectedSpectatePlayer and selectedSpectatePlayer.Name or nil,
+    Values = #getPlayerNames() > 0 and getPlayerNames() or { "Nenhum player" },
+    Default = selectedSpectatePlayer and selectedSpectatePlayer.Name or "Nenhum player",
     Multi = false,
     Searchable = true,
-    Text = "Select player",
-    Tooltip = "Lista automatica com players do servidor.",
+    Text = "Escolher player",
+    Tooltip = "Lista atualizada com os players do servidor.",
 })
 
 visualPlayers:AddButton({
@@ -1242,8 +1260,7 @@ menuGroup:AddLabel("Menu bind")
 menuGroup:AddButton({
     Text = "Refresh player list",
     Func = function()
-        Options.SpectateTarget:SetValues(getPlayerNames())
-        updateSelectedPlayerCard()
+        refreshSpectateDropdown()
         safeNotify("Players", "Lista de players atualizada.")
     end,
 })
@@ -1435,16 +1452,14 @@ Options.EspTracerThickness:OnChanged(function()
 end)
 
 Options.SpectateTarget:OnChanged(function()
-    setSpectateTargetByName(Options.SpectateTarget.Value)
+    local value = Options.SpectateTarget.Value
+    setSpectateTargetByName(value)
     updateSelectedPlayerCard()
 end)
 
 Players.PlayerAdded:Connect(function()
     task.delay(0.2, function()
-        if Options.SpectateTarget then
-            Options.SpectateTarget:SetValues(getPlayerNames())
-            updateSelectedPlayerCard()
-        end
+        refreshSpectateDropdown()
     end)
 end)
 
@@ -1458,10 +1473,7 @@ Players.PlayerRemoving:Connect(function(targetPlayer)
     clearEspEntry(targetPlayer)
 
     task.delay(0.2, function()
-        if Options.SpectateTarget then
-            Options.SpectateTarget:SetValues(getPlayerNames())
-            updateSelectedPlayerCard()
-        end
+        refreshSpectateDropdown()
     end)
 end)
 
@@ -1522,5 +1534,6 @@ SaveManager:LoadAutoloadConfig()
 applyOptimization()
 applyVisual()
 applyFpsCap()
+refreshSpectateDropdown()
 updateSelectedPlayerCard()
-safeNotify("Milo Ui", "Doomsday Obsidian carregado com autosave local.")
+safeNotify("Milo Ui", "Doomsday + Figure Grab carregado em Obsidian.")

@@ -1,7 +1,6 @@
 -- Milo UI + Doomsday loader
--- Troque as URLs abaixo pelos raws hospedados dos arquivos desta pasta.
+-- Carrega somente a HUD Obsidian nova, com Doomsday + Figure Grab.
 
-getgenv().DOOMSDAY_SCRIPT_URL = getgenv().DOOMSDAY_SCRIPT_URL or "https://raw.githubusercontent.com/Milokinot/scripts/main/DOOMSDAY%20SCRIPT/DOOMSDAY.lua"
 getgenv().MILO_UI_URL = getgenv().MILO_UI_URL or "https://raw.githubusercontent.com/Milokinot/scripts/main/DOOMSDAY%20SCRIPT/DOOMSDAY_OBSIDIAN_UNIVERSAL.lua"
 getgenv().FIGURE_GRAB_OATS_URL = getgenv().FIGURE_GRAB_OATS_URL or "https://raw.githubusercontent.com/Milokinot/scripts/main/DOOMSDAY%20SCRIPT/modules/FIGURE_GRAB_OATS.lua"
 
@@ -33,18 +32,14 @@ local function queueOnTeleport(scriptText)
 end
 
 getgenv().QueueDoomsdayOnTeleport = function()
-    if not configured(getgenv().DOOMSDAY_SCRIPT_URL) then
-        warn("[Milo UI Loader] Configure DOOMSDAY_SCRIPT_URL antes de usar o rejoin.")
+    if not configured(getgenv().MILO_UI_URL) then
+        warn("[Milo UI Loader] Configure MILO_UI_URL antes de usar o rejoin.")
         return false
     end
 
-    local payload = ('loadstring(game:HttpGet("%s"))()'):format(getgenv().DOOMSDAY_SCRIPT_URL)
-    if configured(getgenv().MILO_UI_URL) then
-        payload = payload .. "\n" .. ('loadstring(game:HttpGet("%s"))()'):format(getgenv().MILO_UI_URL)
-    end
+    local payload = ('loadstring(game:HttpGet("%s"))()'):format(getgenv().MILO_UI_URL)
 
     return queueOnTeleport(payload)
 end
 
-runRemote(getgenv().DOOMSDAY_SCRIPT_URL)
 runRemote(getgenv().MILO_UI_URL)
